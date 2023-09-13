@@ -1,4 +1,5 @@
 require("math")
+local lookup = require("lookup")
 
 gBaseStats = 0x97bf67c
 gBaseStats_struct_size = 0x1C
@@ -517,18 +518,14 @@ gameCrc32 = {
 function printPartyStatus(game)
     partyBuffer:clear()
     for _, mon in ipairs(game:getParty()) do
+        -- printMon(mon, partyBuffer) -- the emulator refreshes too quickly to use this
         partyBuffer:print(
             string.format(
-                "%-10s (%-4s) (Lv%3i): %3i/%3i hpEV %3i hpIV %3i atkEV %3i atkIV %3i\n",
-                mon.nickname,
-                mon.gender,
+                "%s (Lv%3i): %3i/%3i\n",
+                species[mon.species],
                 mon.level,
                 mon.hp,
-                mon.maxHP,
-                mon.hpEV,
-                mon.hpIV,
-                mon.attackEV,
-                mon.attackIV
+                mon.maxHP
             )
         )
     end
@@ -558,19 +555,18 @@ function detectGame()
     end
 end
 
--- TODO
-function printMon(mon)
+function printMon(mon, buffer)
     str = ""
-    str = str .. mon.nickname .. " (" .. firstCase(game:getSpeciesName(mon.species) .. ")")
+    str = str .. mon.nickname .. " (" .. species[mon.species] .. ")"
     if item[mon.heldItem] then
         str = str .. string.format(" @ %s", item[mon.heldItem])
     end
     str = str .. string.format("\n")
     str = str
         .. "Ability: "
-        .. string.format("%s", ability[(mon.species * 2) - 1 + mon.altAbility])
+        .. string.format("%s", ability[mon.ability])
         .. string.format("\n")
-    str = str .. string.format("Level: %d\n", calcLevel(mon.experience, mon.species))
+    str = str .. string.format("Level: %d\n", mon.level)
     str = str .. string.format("%s", nature[(mon.personality % 25) + 1]) .. " Nature" .. string.format("\n")
     str = str
         .. string.format(
@@ -584,33 +580,33 @@ function printMon(mon)
         )
         .. string.format("\n")
     for i = 1, 4 do
-        local mv = getMove(mon.moves[i])
+        local mv = move[mon.moves[i]]
         if mv ~= "" then
             str = str .. string.format("- %s\n", mv)
         end
     end
     str = str .. string.format("\n")
-    exportBuffer:print(str)
+    buffer:print(str)
 end
 
 -- TODO
-function exportall()
+function pc()
     address = 0x2029800 + 4 + emu:read8(0x3005d94)
     i = 0
     exportparty()
     while i < 120 do
         if emu:read32(address) ~= 0 then
-            printMon(game:_readBoxMon(address))
+            printMon(game:_readBoxMon(address), exportBuffer)
         end
         i = i + 1
         address = address + 80
     end
 end
 
-function exportparty()
+function party()
     exportBuffer:clear()
     for _, mon in ipairs(game:getParty()) do
-        printMon(mon)
+        printMon(mon, exportBuffer)
     end
 end
 
@@ -624,12 +620,12 @@ end
 function help()
     exportBuffer:clear()
     exportBuffer:print("Available commands:\n")
-    exportBuffer:print(" exportparty() - exports showdown calc verison of party to console\n")
-    exportBuffer:print(" exportall() - exports showdown calc verison of first 5 boxes + party to console\n")
+    exportBuffer:print(" party() - exports showdown calc verison of party to console\n")
+    exportBuffer:print(" pc() - exports showdown calc verison of first 5 boxes + party to console\n")
 end
 
 callbacks:add("start", detectGame)
-callbacks:add("frame", updatePartyBuffer)
+callbacks:add("frame", updatePartyBuffer) -- useful for print debugging in real time lmao
 if emu then
     detectGame()
     help()
