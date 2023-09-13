@@ -590,18 +590,20 @@ function printMon(mon, buffer)
 end
 
 -- TODO
-function pc()
-    address = 0x2029800 + 4 + emu:read8(0x3005d94)
-    i = 0
-    exportparty()
-    while i < 120 do
-        if emu:read32(address) ~= 0 then
-            printMon(game:_readBoxMon(address), exportBuffer)
-        end
-        i = i + 1
-        address = address + 80
-    end
-end
+--function pc()
+--    -- export the current party
+--    party()
+--
+--    address = 0x2029800 + 4 + emu:read8(0x3005d94)
+--    i = 0
+--    while i < 120 do
+--        if emu:read32(address) ~= 0 then
+--            printMon(game:_readBoxMon(address), exportBuffer)
+--        end
+--        i = i + 1
+--        address = address + 80
+--    end
+--end
 
 function party()
     exportBuffer:clear()
@@ -621,7 +623,10 @@ function help()
     exportBuffer:clear()
     exportBuffer:print("Available commands:\n")
     exportBuffer:print(" party() - exports showdown calc verison of party to console\n")
-    exportBuffer:print(" pc() - exports showdown calc verison of first 5 boxes + party to console\n")
+    -- this is something I want to do but haven't been able to figure out
+    -- probably what you need to do is to look at the symbol list
+    -- and set some breakpoint to find the address it points to then use it to export
+    --exportBuffer:print(" pc() - exports showdown calc verison of first 5 boxes + party to console\n")
 end
 
 callbacks:add("start", detectGame)
