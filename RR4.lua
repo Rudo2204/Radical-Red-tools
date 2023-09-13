@@ -1,5 +1,14 @@
 require("math")
 
+gBaseStats = 0x97bf67c
+gBaseStats_struct_size = 0x1C
+gBaseStats_gender_ratio_offset = 0x10
+gBaseStats_ability1_offset = 0x16
+gBaseStats_ability2_offset = 0x17
+gBaseStats_type1_offset = 0x6
+gBaseStats_type2_offset = 0x7
+gBaseStats_hidden_ability_offset = 0x1A
+
 -- specific to Radical Red 4
 -- if you try to adapt this to some other game and find error this is probably
 -- what you want to look at
@@ -264,9 +273,6 @@ function Generation3En._readBoxMon(game, address)
     mon.isEgg = (flags >> 2) & 1
     mon.otName = game:toString(emu:readRange(address + 20, game._playerNameLength))
     mon.markings = emu:read8(address + 27)
-    mon.checksum = emu:read16(address + 28)
-
-    local key = mon.otId ~ mon.personality
 
     local pSel = substructSelector[mon.personality % 24]
     local ss0 = {}
@@ -275,11 +281,12 @@ function Generation3En._readBoxMon(game, address)
     local ss3 = {}
 
     for i = 0, 2 do
-        ss0[i] = emu:read32(address + 32 + pSel[1] * 12 + i * 4) ~ key
-        ss1[i] = emu:read32(address + 32 + pSel[2] * 12 + i * 4) ~ key
-        ss2[i] = emu:read32(address + 32 + pSel[3] * 12 + i * 4) ~ key
-        ss3[i] = emu:read32(address + 32 + pSel[4] * 12 + i * 4) ~ key
+        ss0[i] = emu:read32(address + 32 + pSel[1] * 12 + i * 4) -- growth
+        ss1[i] = emu:read32(address + 32 + pSel[2] * 12 + i * 4) -- attack
+        ss2[i] = emu:read32(address + 32 + pSel[3] * 12 + i * 4) -- effort
+        ss3[i] = emu:read32(address + 32 + pSel[4] * 12 + i * 4) -- misc
     end
+
     mon.species = ss0[0] & 0xFFFF
     mon.heldItem = ss0[0] >> 16
     mon.experience = ss0[1]
@@ -327,7 +334,7 @@ function Generation3En._readBoxMon(game, address)
     mon.spAttackIV = (flags >> 20) & 0x1F
     mon.spDefenseIV = (flags >> 25) & 0x1F
     -- Bit 30 is another "isEgg" bit
-    mon.altAbility = (flags >> 31) & 1
+    mon.hasHiddenAbility = (flags >> 31) & 1
     flags = ss3[2]
     mon.coolRibbon = flags & 7
     mon.beautyRibbon = (flags >> 3) & 7
@@ -347,6 +354,40 @@ function Generation3En._readBoxMon(game, address)
     mon.earthRibbon = (flags >> 25) & 1
     mon.worldRibbon = (flags >> 26) & 1
     mon.eventLegal = (flags >> 27) & 0x1F
+
+    local p_gender = mon.personality % 256
+    local gender_ratio = emu:read8(gBaseStats + gBaseStats_struct_size * mon.species + gBaseStats_gender_ratio_offset)
+    if gender_ratio == 0 then
+        mon.gender = "M"
+    elseif gender_ratio == 254 then
+        mon.gender = "F"
+    elseif gender_ratio == 255 then
+        mon.gender = "Gender unknown"
+    else
+        if p_gender < gender_ratio then
+            mon.gender = "F"
+        else
+            mon.gender = "M"
+        end
+    end
+
+    local ability1 = emu:read8(gBaseStats + gBaseStats_struct_size * mon.species + gBaseStats_ability1_offset)
+    local ability2 = emu:read8(gBaseStats + gBaseStats_struct_size * mon.species + gBaseStats_ability2_offset)
+    local hidden_ability =
+        emu:read8(gBaseStats + gBaseStats_struct_size * mon.species + gBaseStats_hidden_ability_offset)
+    if mon.hasHiddenAbility == 1 and hidden_ability ~= 0 then
+        mon.ability = hidden_ability
+    else
+        if (mon.personality & 1) == 0 or (ability2 == 0) then
+            mon.ability = ability1
+        else
+            mon.ability = ability2
+        end
+    end
+
+    mon.type1 = emu:read8(gBaseStats + gBaseStats_struct_size * mon.species + gBaseStats_type1_offset)
+    mon.type2 = emu:read8(gBaseStats + gBaseStats_struct_size * mon.species + gBaseStats_type2_offset)
+
     return mon
 end
 
@@ -473,17 +514,21 @@ gameCrc32 = {
 }
 
 -- TODO change this so we can print both current party and enemy party
-function printPartyStatus(game, buffer)
-    buffer:clear()
+function printPartyStatus(game)
+    partyBuffer:clear()
     for _, mon in ipairs(game:getParty()) do
-        buffer:print(
+        partyBuffer:print(
             string.format(
-                "%-10s (Lv%3i %10s): %3i/%3i\n",
+                "%-10s (%-4s) (Lv%3i): %3i/%3i hpEV %3i hpIV %3i atkEV %3i atkIV %3i\n",
                 mon.nickname,
+                mon.gender,
                 mon.level,
-                game:getSpeciesName(mon.species),
                 mon.hp,
-                mon.maxHP
+                mon.maxHP,
+                mon.hpEV,
+                mon.hpIV,
+                mon.attackEV,
+                mon.attackIV
             )
         )
     end
@@ -503,6 +548,13 @@ function detectGame()
         console:error("Unknown game!")
     else
         console:log("Found game: " .. game.name)
+        if not partyBuffer then
+            partyBuffer = console:createBuffer("Party")
+        end
+        if not exportBuffer then
+            exportBuffer = console:createBuffer("Exports")
+            exportBuffer:setSize(200, 1000)
+        end
     end
 end
 
@@ -538,7 +590,7 @@ function printMon(mon)
         end
     end
     str = str .. string.format("\n")
-    buffer:print(str)
+    exportBuffer:print(str)
 end
 
 -- TODO
@@ -556,23 +608,29 @@ function exportall()
 end
 
 function exportparty()
-    buffer:clear()
+    exportBuffer:clear()
     for _, mon in ipairs(game:getParty()) do
         printMon(mon)
     end
 end
 
+function updatePartyBuffer()
+    if not game or not partyBuffer then
+        return
+    end
+    printPartyStatus(game, partyBuffer)
+end
+
 function help()
-    buffer:clear()
-    buffer:print("Available commands:\n")
-    buffer:print(" exportparty() - exports showdown calc verison of party to console\n")
-    buffer:print(" exportall() - exports showdown calc verison of first 5 boxes + party to console\n")
+    exportBuffer:clear()
+    exportBuffer:print("Available commands:\n")
+    exportBuffer:print(" exportparty() - exports showdown calc verison of party to console\n")
+    exportBuffer:print(" exportall() - exports showdown calc verison of first 5 boxes + party to console\n")
 end
 
 callbacks:add("start", detectGame)
+callbacks:add("frame", updatePartyBuffer)
 if emu then
     detectGame()
-    buffer = console:createBuffer("Exports")
-    buffer:setSize(200, 1000)
     help()
 end
